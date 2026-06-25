@@ -1,0 +1,956 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Minimal Agent Runtime</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ── Reset & Variables ─────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg-primary: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #1c2128;
+  --bg-glass: rgba(22, 27, 34, 0.85);
+  --border: #30363d;
+  --border-light: #3d444d;
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted: #484f58;
+  --accent: #2dd4bf;
+  --accent-dim: rgba(45, 212, 191, 0.15);
+  --accent-glow: rgba(45, 212, 191, 0.3);
+  --user-bg: #1a3a4a;
+  --assistant-bg: #1c2128;
+  --tool-bg: #161b22;
+  --error: #f85149;
+  --success: #3fb950;
+  --font-code: 'JetBrains Mono', 'Fira Code', monospace;
+  --font-ui: 'DM Sans', -apple-system, sans-serif;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --shadow: 0 4px 24px rgba(0,0,0,0.3);
+}
+
+html, body { height: 100%; }
+body {
+  font-family: var(--font-ui);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  display: flex;
+  overflow: hidden;
+}
+
+/* ── Grain texture overlay ─────────────────────────────── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  opacity: 0.03;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* ── Sidebar ───────────────────────────────────────────── */
+.sidebar {
+  width: 280px;
+  min-width: 280px;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.sidebar-header {
+  padding: 20px 16px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sidebar-header h1 {
+  font-family: var(--font-code);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.sidebar-header p {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-code);
+}
+
+.btn-new {
+  margin: 12px 16px;
+  padding: 10px;
+  background: var(--accent-dim);
+  border: 1px solid rgba(45, 212, 191, 0.2);
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+  font-family: var(--font-code);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.btn-new:hover {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+}
+
+.session-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 8px;
+}
+
+.session-item {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.session-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.session-item.active {
+  background: var(--accent-dim);
+  border: 1px solid rgba(45, 212, 191, 0.15);
+}
+
+.session-item .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.session-item.active .dot {
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent-glow);
+}
+
+.session-item .session-title {
+  font-size: 13px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+.session-item .session-time {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-code);
+  flex-shrink: 0;
+}
+
+.session-item .btn-delete {
+  opacity: 0;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.session-item:hover .btn-delete {
+  opacity: 1;
+}
+
+.session-item .btn-delete:hover {
+  color: var(--error);
+  background: rgba(248, 81, 73, 0.1);
+}
+
+/* ── Main Area ─────────────────────────────────────────── */
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  position: relative;
+}
+
+.chat-header {
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-glass);
+  backdrop-filter: blur(12px);
+  z-index: 10;
+}
+
+.chat-header .model-badge {
+  font-family: var(--font-code);
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  border: 1px solid rgba(45, 212, 191, 0.2);
+}
+
+.chat-header .status {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-code);
+  margin-left: auto;
+}
+
+/* ── Messages ──────────────────────────────────────────── */
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  scroll-behavior: smooth;
+}
+
+.message {
+  max-width: 780px;
+  width: 100%;
+  margin: 0 auto;
+  animation: msgIn 0.3s ease-out both;
+}
+
+@keyframes msgIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.message .msg-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.message .msg-role {
+  font-family: var(--font-code);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.message.user .msg-role { color: var(--accent); }
+.message.assistant .msg-role { color: #a78bfa; }
+.message.tool .msg-role { color: #f59e0b; }
+
+.message .msg-time {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-code);
+}
+
+.message .msg-body {
+  padding: 14px 18px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.message.user .msg-body {
+  background: var(--user-bg);
+  border: 1px solid rgba(45, 212, 191, 0.1);
+}
+
+.message.assistant .msg-body {
+  background: var(--assistant-bg);
+  border: 1px solid var(--border);
+}
+
+.message.tool .msg-body {
+  background: var(--tool-bg);
+  border: 1px solid var(--border);
+  font-family: var(--font-code);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* ── Tool Call Card ────────────────────────────────────── */
+.tool-call-card {
+  max-width: 780px;
+  width: 100%;
+  margin: 0 auto;
+  animation: msgIn 0.3s ease-out both;
+}
+
+.tool-call-card .card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.15);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.tool-call-card .card-header:hover {
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.tool-call-card .tool-icon {
+  font-size: 14px;
+}
+
+.tool-call-card .tool-name {
+  font-family: var(--font-code);
+  font-size: 12px;
+  font-weight: 600;
+  color: #f59e0b;
+}
+
+.tool-call-card .tool-toggle {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-muted);
+  transition: transform 0.2s;
+}
+
+.tool-call-card.expanded .tool-toggle {
+  transform: rotate(90deg);
+}
+
+.tool-call-card .card-body {
+  display: none;
+  padding: 12px 14px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  font-family: var(--font-code);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.tool-call-card.expanded .card-body {
+  display: block;
+}
+
+/* ── Typing Indicator ──────────────────────────────────── */
+.typing-indicator {
+  max-width: 780px;
+  width: 100%;
+  margin: 0 auto;
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 18px;
+}
+
+.typing-indicator.visible {
+  display: flex;
+}
+
+.typing-indicator .dots {
+  display: flex;
+  gap: 4px;
+}
+
+.typing-indicator .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: dotPulse 1.4s ease-in-out infinite;
+}
+
+.typing-indicator .dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-indicator .dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes dotPulse {
+  0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1.1); }
+}
+
+.typing-indicator .label {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: var(--font-code);
+}
+
+/* ── Input Area ────────────────────────────────────────── */
+.input-area {
+  padding: 16px 24px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-glass);
+  backdrop-filter: blur(12px);
+}
+
+.input-wrapper {
+  max-width: 780px;
+  margin: 0 auto;
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.input-wrapper textarea {
+  flex: 1;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.5;
+  resize: none;
+  min-height: 44px;
+  max-height: 160px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.input-wrapper textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
+.input-wrapper textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.btn-send {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  border: none;
+  color: var(--bg-primary);
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.btn-send:hover {
+  background: #5eead4;
+  transform: scale(1.05);
+}
+
+.btn-send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ── Per-message stats ─────────────────────────────────── */
+.msg-stats {
+  display: flex;
+  gap: 12px;
+  padding: 6px 0 0;
+  font-family: var(--font-code);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.msg-stats .stat {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.msg-stats .stat-icon {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+/* ── Tool args section ─────────────────────────────────── */
+.tool-call-card .card-args {
+  padding: 8px 14px;
+  background: rgba(245, 158, 11, 0.04);
+  border-left: 1px solid rgba(245, 158, 11, 0.15);
+  border-right: 1px solid rgba(245, 158, 11, 0.15);
+  font-family: var(--font-code);
+  font-size: 11px;
+  color: var(--text-secondary);
+  display: none;
+}
+
+.tool-call-card.expanded .card-args {
+  display: block;
+}
+
+.tool-call-card .card-args .arg-label {
+  color: #f59e0b;
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.tool-call-card .card-args .arg-value {
+  color: var(--accent);
+}
+
+.tool-call-card .card-sep {
+  height: 1px;
+  background: var(--border);
+  display: none;
+}
+
+.tool-call-card.expanded .card-sep {
+  display: block;
+}
+
+/* ── Empty state ───────────────────────────────────────── */
+.empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--text-muted);
+}
+
+.empty-state .logo {
+  font-size: 48px;
+  opacity: 0.3;
+}
+
+.empty-state p {
+  font-family: var(--font-code);
+  font-size: 13px;
+}
+
+/* ── Scrollbar ─────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
+
+/* ── Mobile ────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .sidebar { display: none; }
+  .messages { padding: 16px; }
+  .input-area { padding: 12px 16px 16px; }
+}
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<aside class="sidebar">
+  <div class="sidebar-header">
+    <h1>▸ Agent Runtime</h1>
+    <p>DeepSeek + Tool Calling</p>
+  </div>
+  <button class="btn-new" onclick="createSession()">
+    <span>+</span> 新建对话
+  </button>
+  <div class="session-list" id="sessionList"></div>
+</aside>
+
+<!-- Main Chat -->
+<main class="main">
+  <div class="chat-header">
+    <span class="model-badge" id="modelBadge">deepseek-chat</span>
+    <span class="status" id="statusText">就绪</span>
+  </div>
+
+  <div class="messages" id="messagesContainer">
+    <div class="empty-state" id="emptyState">
+      <div class="logo">⚡</div>
+      <p>发送消息开始对话</p>
+    </div>
+    <div class="typing-indicator" id="typingIndicator">
+      <div class="dots">
+        <div class="dot"></div>
+        <div class="dot"></div>
+        <div class="dot"></div>
+      </div>
+      <span class="label">Agent 正在思考...</span>
+    </div>
+  </div>
+
+  <div class="input-area">
+    <div class="input-wrapper">
+      <textarea
+        id="messageInput"
+        placeholder="输入消息... (Enter 发送, Shift+Enter 换行)"
+        rows="1"
+      ></textarea>
+      <button class="btn-send" id="btnSend" onclick="sendMessage()">↑</button>
+    </div>
+  </div>
+</main>
+
+<script>
+// ── Config ───────────────────────────────────────────────
+// 后端 API 地址。本地开发时为空（同域），部署时改为 Railway 地址
+// 可通过 URL 参数 ?api=https://xxx.railway.app 覆盖
+const API_BASE = new URLSearchParams(window.location.search).get('api') || '';
+
+// ── State ────────────────────────────────────────────────
+let currentSessionId = null;
+let isSending = false;
+
+// ── API ──────────────────────────────────────────────────
+const api = {
+  async listSessions() {
+    const res = await fetch(`${API_BASE}/api/sessions`);
+    return res.json();
+  },
+  async createSession(title) {
+    const res = await fetch(`${API_BASE}/api/sessions`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({title: title || null}),
+    });
+    return res.json();
+  },
+  async getMessages(sessionId) {
+    const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`);
+    return res.json();
+  },
+  async deleteSession(sessionId) {
+    await fetch(`${API_BASE}/api/sessions/${sessionId}`, {method: 'DELETE'});
+  },
+  async chat(sessionId, message) {
+    const res = await fetch(`${API_BASE}/api/chat`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: sessionId, message}),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || '请求失败');
+    }
+    return res.json();
+  },
+};
+
+// ── Session Management ───────────────────────────────────
+async function loadSessions() {
+  const sessions = await api.listSessions();
+  const list = document.getElementById('sessionList');
+  list.innerHTML = sessions.map(s => `
+    <div class="session-item ${s.id === currentSessionId ? 'active' : ''}"
+         onclick="switchSession('${s.id}')">
+      <span class="dot"></span>
+      <span class="session-title">${escapeHtml(s.title || s.id)}</span>
+      <span class="session-time">${formatTime(s.updated_at)}</span>
+      <button class="btn-delete" onclick="event.stopPropagation(); deleteSession('${s.id}')" title="删除">×</button>
+    </div>
+  `).join('');
+}
+
+async function createSession() {
+  const data = await api.createSession();
+  currentSessionId = data.id;
+  await loadSessions();
+  clearMessages();
+  document.getElementById('messageInput').focus();
+}
+
+async function switchSession(id) {
+  currentSessionId = id;
+  await loadSessions();
+  await loadMessages();
+}
+
+async function deleteSession(id) {
+  await api.deleteSession(id);
+  if (currentSessionId === id) {
+    currentSessionId = null;
+    clearMessages();
+  }
+  await loadSessions();
+  // 如果删完了，自动创建一个
+  const sessions = await api.listSessions();
+  if (sessions.length === 0) {
+    await createSession();
+  } else if (!currentSessionId) {
+    await switchSession(sessions[0].id);
+  }
+}
+
+// ── Messages ─────────────────────────────────────────────
+async function loadMessages() {
+  if (!currentSessionId) return;
+  const messages = await api.getMessages(currentSessionId);
+  const container = document.getElementById('messagesContainer');
+  const empty = document.getElementById('emptyState');
+  const typing = document.getElementById('typingIndicator');
+
+  // 清空（保留 empty 和 typing）
+  container.querySelectorAll('.message, .tool-call-card').forEach(el => el.remove());
+
+  if (messages.length === 0) {
+    empty.style.display = 'flex';
+    return;
+  }
+  empty.style.display = 'none';
+
+  // 重新插入 typing indicator 到最后
+  container.insertBefore(typing, null);
+
+  for (const msg of messages) {
+    if (msg.role === 'tool') {
+      // 工具消息：显示工具调用卡片（带参数）
+      appendToolCall(msg.tool_name || 'tool', {}, msg.content || '');
+    } else if (msg.role === 'user') {
+      appendMessage('user', msg.content || '', msg.created_at);
+    } else if (msg.role === 'assistant') {
+      // assistant 消息可能包含 tool_calls 信息（JSON 格式）
+      let text = msg.content || '';
+      let toolCalls = [];
+      try {
+        const parsed = JSON.parse(text);
+        if (parsed.tool_calls) {
+          text = parsed.text || '';
+          toolCalls = parsed.tool_calls;
+        }
+      } catch(e) {}
+      // 如果有文本内容，显示为消息
+      if (text && text !== '(工具调用)') {
+        appendMessage('assistant', text, msg.created_at);
+      }
+    }
+  }
+  scrollToBottom();
+}
+
+function appendMessage(role, content, time, stats) {
+  const container = document.getElementById('messagesContainer');
+  const typing = document.getElementById('typingIndicator');
+  const empty = document.getElementById('emptyState');
+  empty.style.display = 'none';
+
+  const div = document.createElement('div');
+  div.className = `message ${role}`;
+  let statsHtml = '';
+  if (stats) {
+    statsHtml = `
+      <div class="msg-stats">
+        <span class="stat"><span class="stat-icon">⚡</span> tokens: ${stats.tokens}</span>
+        <span class="stat"><span class="stat-icon">⏱</span> ${stats.duration}s</span>
+        <span class="stat"><span class="stat-icon">🔄</span> 轮次: ${stats.turns}</span>
+        ${stats.toolCount > 0 ? `<span class="stat"><span class="stat-icon">🛠</span> 工具: ${stats.toolCount}次</span>` : ''}
+      </div>
+    `;
+  }
+  div.innerHTML = `
+    <div class="msg-header">
+      <span class="msg-role">${role === 'user' ? '你' : 'Agent'}</span>
+      <span class="msg-time">${time ? formatTime(time) : ''}</span>
+    </div>
+    <div class="msg-body">${escapeHtml(content)}</div>
+    ${statsHtml}
+  `;
+  container.insertBefore(div, typing);
+}
+
+function appendToolCall(name, args, result) {
+  const container = document.getElementById('messagesContainer');
+  const typing = document.getElementById('typingIndicator');
+
+  const div = document.createElement('div');
+  div.className = 'tool-call-card';
+  // 解析 result 尝试格式化
+  let displayResult = result;
+  try {
+    const parsed = JSON.parse(result);
+    displayResult = JSON.stringify(parsed, null, 2);
+  } catch(e) {}
+
+  // 构建参数显示
+  let argsHtml = '';
+  if (args && Object.keys(args).length > 0) {
+    const argsEntries = Object.entries(args).map(([k, v]) =>
+      `<span class="arg-label">${escapeHtml(k)}:</span> <span class="arg-value">${escapeHtml(String(v))}</span>`
+    ).join('\n');
+    argsHtml = `<div class="card-args">${argsEntries}</div>`;
+  }
+
+  div.innerHTML = `
+    <div class="card-header" onclick="this.parentElement.classList.toggle('expanded')">
+      <span class="tool-icon">⚡</span>
+      <span class="tool-name">${escapeHtml(name)}</span>
+      ${args && Object.keys(args).length > 0 ?
+        `<span style="font-size:11px;color:var(--text-muted);font-family:var(--font-code);margin-left:8px;">${escapeHtml(Object.entries(args).map(([k,v]) => `${k}=${String(v)}`).join(', '))}</span>` : ''}
+      <span class="tool-toggle">▶</span>
+    </div>
+    ${argsHtml}
+    <div class="card-sep"></div>
+    <div class="card-body">${escapeHtml(displayResult)}</div>
+  `;
+  container.insertBefore(div, typing);
+}
+
+function clearMessages() {
+  const container = document.getElementById('messagesContainer');
+  container.querySelectorAll('.message, .tool-call-card').forEach(el => el.remove());
+  document.getElementById('emptyState').style.display = 'flex';
+}
+
+// ── Send Message ─────────────────────────────────────────
+async function sendMessage() {
+  if (isSending) return;
+  const input = document.getElementById('messageInput');
+  const message = input.value.trim();
+  if (!message) return;
+
+  // 自动创建 session
+  if (!currentSessionId) {
+    await createSession();
+  }
+
+  input.value = '';
+  autoResize(input);
+  isSending = true;
+  document.getElementById('btnSend').disabled = true;
+
+  // 显示用户消息
+  appendMessage('user', message);
+  scrollToBottom();
+
+  // 显示 typing indicator
+  const typing = document.getElementById('typingIndicator');
+  typing.classList.add('visible');
+  scrollToBottom();
+
+  try {
+    const result = await api.chat(currentSessionId, message);
+
+    typing.classList.remove('visible');
+
+    // 先显示工具调用（带参数）
+    if (result.tool_calls && result.tool_calls.length > 0) {
+      for (const tc of result.tool_calls) {
+        appendToolCall(tc.name, tc.arguments, tc.result);
+      }
+    }
+
+    // 显示回复（带统计信息）
+    appendMessage('assistant', result.reply, null, {
+      tokens: result.tokens_used,
+      duration: result.duration,
+      turns: result.turns,
+      toolCount: result.tool_calls ? result.tool_calls.length : 0,
+    });
+
+  } catch (err) {
+    typing.classList.remove('visible');
+    appendMessage('assistant', `错误: ${err.message}`);
+  }
+
+  isSending = false;
+  document.getElementById('btnSend').disabled = false;
+  scrollToBottom();
+  loadSessions(); // 刷新 session 列表（更新时间）
+}
+
+// ── Utils ────────────────────────────────────────────────
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function formatTime(ts) {
+  if (!ts) return '';
+  try {
+    const d = new Date(ts);
+    const now = new Date();
+    const isToday = d.toDateString() === now.toDateString();
+    if (isToday) {
+      return d.toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit'});
+    }
+    return d.toLocaleDateString('zh-CN', {month: '2-digit', day: '2-digit'}) + ' ' +
+           d.toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit'});
+  } catch {
+    return '';
+  }
+}
+
+function scrollToBottom() {
+  const container = document.getElementById('messagesContainer');
+  requestAnimationFrame(() => {
+    container.scrollTop = container.scrollHeight;
+  });
+}
+
+function autoResize(textarea) {
+  textarea.style.height = 'auto';
+  textarea.style.height = Math.min(textarea.scrollHeight, 160) + 'px';
+}
+
+// ── Event Listeners ──────────────────────────────────────
+document.getElementById('messageInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+document.getElementById('messageInput').addEventListener('input', (e) => {
+  autoResize(e.target);
+});
+
+// ── Init ─────────────────────────────────────────────────
+(async function init() {
+  // 检查后端健康状态
+  try {
+    const res = await fetch(`${API_BASE}/api/health`);
+    const data = await res.json();
+    document.getElementById('modelBadge').textContent = data.model;
+    document.getElementById('statusText').textContent = API_BASE ? `已连接 ${API_BASE}` : '已连接';
+  } catch {
+    document.getElementById('statusText').textContent = API_BASE ? `连接失败: ${API_BASE}` : '连接失败';
+    document.getElementById('statusText').style.color = 'var(--error)';
+  }
+
+  // 加载 session 列表
+  await loadSessions();
+
+  // 如果有 session，自动选中第一个
+  const sessions = await api.listSessions();
+  if (sessions.length > 0) {
+    await switchSession(sessions[0].id);
+  } else {
+    await createSession();
+  }
+})();
+</script>
+</body>
+</html>
