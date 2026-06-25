@@ -54,23 +54,92 @@ def build_messages(
 
 
 def _format_history(history: list[Message]) -> list[dict]:
-    """将 Message 对象列表转为 OpenAI messages 格式"""
+    """将 Message 对象列表转为 OpenAI messages 格式
+
+    处理 assistant 消息中的 tool_calls 信息：
+    - 保存时 tool_calls 被序列化到 content JSON 中
+    - 加载时需要还原为 OpenAI 要求的 tool_calls 字段
+    - 同时用后续 tool 消息的 tool_call_id 来匹配
+    """
     formatted: list[dict] = []
-    for msg in history:
+    # 收集所有 tool 消息的 tool_call_id，用于匹配
+    tool_call_ids = {msg.tool_call_id for msg in history if msg.role == "tool" and msg.tool_call_id}
+
+    i = 0
+    while i < len(history):
+        msg = history[i]
+
         if msg.role == "user":
             formatted.append({"role": "user", "content": msg.content or ""})
+
         elif msg.role == "assistant":
-            entry: dict = {"role": "assistant", "content": msg.content or ""}
-            formatted.append(entry)
+            # 尝试解析 content 中的 tool_calls 信息
+            content = msg.content or ""
+            parsed_tool_calls = None
+
+            if content:
+                try:
+                    data = json.loads(content)
+                    if isinstance(data, dict) and "tool_calls" in data:
+                        # 从 JSON 中还原 tool_calls
+                        content = data.get("text", "")
+                        parsed_tool_calls = data["tool_calls"]
+                except (json.JSONDecodeError, TypeError):
+                    pass  # 普通文本，不是 JSON
+
+            # 检查后续消息是否有关联的 tool 消息
+            if parsed_tool_calls and i + 1 < len(history) and history[i + 1].role == "tool":
+                # 从后续 tool 消息获取 tool_call_id
+                tool_ids = []
+                j = i + 1
+                while j < len(history) and history[j].role == "tool":
+                    if history[j].tool_call_id:
+                        tool_ids.append(history[j].tool_call_id)
+                    j += 1
+
+                # 构建 tool_calls（优先用 JSON 中保存的 id，其次用 tool 消息的 id）
+                tool_calls = []
+                for idx, tc_info in enumerate(parsed_tool_calls):
+                    tc_id = (tc_info.get("id")
+                             or (tool_ids[idx] if idx < len(tool_ids) else None)
+                             or f"call_{idx}_{hash(tc_info.get('name', '')) % 10000:04d}")
+                    tool_calls.append({
+                        "id": tc_id,
+                        "type": "function",
+                        "function": {
+                            "name": tc_info["name"],
+                            "arguments": json.dumps(tc_info["arguments"], ensure_ascii=False),
+                        },
+                    })
+
+                entry: dict = {"role": "assistant", "content": content, "tool_calls": tool_calls}
+                formatted.append(entry)
+            else:
+                entry: dict = {"role": "assistant", "content": content}
+                formatted.append(entry)
+
         elif msg.role == "tool":
-            formatted.append({
-                "role": "tool",
-                "tool_call_id": msg.tool_call_id or "",
-                "content": msg.content or "",
-            })
+            # 检查前面是否有带 tool_calls 的 assistant 消息
+            has_preceding_tool_calls = (
+                formatted
+                and formatted[-1].get("role") == "assistant"
+                and "tool_calls" in formatted[-1]
+            )
+            if has_preceding_tool_calls:
+                formatted.append({
+                    "role": "tool",
+                    "tool_call_id": msg.tool_call_id or "",
+                    "content": msg.content or "",
+                })
+            else:
+                logger.debug("跳过孤立的 tool 消息 (无 preceding tool_calls): %s", msg.tool_call_id)
+
         elif msg.role == "system":
             # 跳过，system prompt 由 build_messages 管理
             pass
+
+        i += 1
+
     return formatted
 
 

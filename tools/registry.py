@@ -63,13 +63,22 @@ class ToolRegistry:
             for info in self._tools.values()
         ]
 
-    def execute(self, tool_name: str, arguments: dict) -> str:
-        """执行指定工具，返回结果字符串。异常时返回错误信息。"""
+    def execute(self, tool_name: str, arguments: dict, context: dict | None = None) -> str:
+        """执行指定工具，返回结果字符串。异常时返回错误信息。
+
+        Args:
+            tool_name: 工具名称
+            arguments: 工具参数
+            context: 额外上下文（如 session_id），会作为 kwargs 传给工具函数
+        """
         info = self._tools.get(tool_name)
         if info is None:
             return json.dumps({"error": f"未知工具: {tool_name}"}, ensure_ascii=False)
         try:
-            result = info.func(**arguments)
+            kwargs = {**arguments}
+            if context:
+                kwargs.update(context)
+            result = info.func(**kwargs)
             return str(result)
         except Exception as e:
             logger.exception("工具 %s 执行异常", tool_name)

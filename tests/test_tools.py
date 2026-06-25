@@ -77,24 +77,31 @@ class TestSearch:
 class TestTodo:
     """待办工具测试"""
 
+    # 使用独立 session_id 避免测试间互相干扰
+    _sid = "test-tools-todo"
+
     def test_add_todo(self):
-        result = registry.execute("todo", {"action": "add", "content": "买菜"})
+        result = registry.execute("todo", {"action": "add", "content": "买菜"}, context={"session_id": self._sid})
         assert "已添加" in result
 
     def test_list_todos(self):
-        result = registry.execute("todo", {"action": "list"})
+        result = registry.execute("todo", {"action": "list"}, context={"session_id": self._sid})
         assert "待办" in result
 
     def test_complete_todo(self):
-        result = registry.execute("todo", {"action": "complete", "todo_id": 1})
+        # 先添加一条，拿到 id，再完成
+        import json
+        add_result = registry.execute("todo", {"action": "add", "content": "测试完成"}, context={"session_id": self._sid})
+        todo_id = json.loads(add_result)["todo"]["id"]
+        result = registry.execute("todo", {"action": "complete", "todo_id": todo_id}, context={"session_id": self._sid})
         assert "已完成" in result
 
     def test_add_without_content(self):
-        result = registry.execute("todo", {"action": "add"})
+        result = registry.execute("todo", {"action": "add"}, context={"session_id": self._sid})
         assert "error" in result.lower() or "需要" in result
 
     def test_complete_nonexistent(self):
-        result = registry.execute("todo", {"action": "complete", "todo_id": 99999})
+        result = registry.execute("todo", {"action": "complete", "todo_id": 99999}, context={"session_id": self._sid})
         assert "未找到" in result
 
 

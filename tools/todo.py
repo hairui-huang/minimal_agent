@@ -1,23 +1,41 @@
-"""待办事项 + 天气工具"""
+"""待办事项工具（SQLite 持久化，按 session 隔离）"""
 
 import json
+import sqlite3
 from datetime import datetime
 
 from tools.registry import register_tool
 
-# 内存中的待办列表（按 session 隔离由 agent 层处理，这里简单用全局列表）
-_todos: list[dict] = []
-_next_id = 1
+# 数据库路径（与 session 共用同一个 DB）
+_DB_PATH = "agent.db"
 
-# Mock 天气数据
-_MOCK_WEATHER = {
-    "北京": "晴，25°C，湿度 40%",
-    "上海": "多云，28°C，湿度 65%",
-    "深圳": "阵雨，30°C，湿度 80%",
-    "杭州": "阴，22°C，湿度 55%",
-    "成都": "小雨，20°C，湿度 70%",
-    "default": "晴转多云，24°C，湿度 50%",
-}
+
+def _get_conn():
+    conn = sqlite3.connect(_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _ensure_table():
+    """确保 todos 表存在"""
+    conn = _get_conn()
+    try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS todos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                content TEXT NOT NULL,
+                done INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# 启动时建表
+_ensure_table()
 
 
 @register_tool(
@@ -43,75 +61,62 @@ _MOCK_WEATHER = {
         "required": ["action"],
     },
 )
-def todo(action: str, content: str = None, todo_id: int = None) -> str:
-    """管理待办事项"""
-    global _next_id
+def todo(action: str, content: str = None, todo_id: int = None, session_id: str = "default") -> str:
+    """管理待办事项（按 session 隔离，持久化到 SQLite）"""
 
     if action == "add":
         if not content:
             return json.dumps({"error": "添加待办需要 content 参数"}, ensure_ascii=False)
-        item = {
-            "id": _next_id,
-            "content": content,
-            "done": False,
-            "created_at": datetime.now().isoformat(),
-        }
-        _todos.append(item)
-        _next_id += 1
-        return json.dumps(
-            {"message": f"已添加待办 #{item['id']}: {content}", "todo": item},
-            ensure_ascii=False,
-        )
+        conn = _get_conn()
+        try:
+            cur = conn.execute(
+                "INSERT INTO todos (session_id, content, done) VALUES (?, ?, 0)",
+                (session_id, content),
+            )
+            conn.commit()
+            item = {"id": cur.lastrowid, "content": content, "done": False}
+            return json.dumps(
+                {"message": f"已添加待办 #{item['id']}: {content}", "todo": item},
+                ensure_ascii=False,
+            )
+        finally:
+            conn.close()
 
     if action == "list":
-        if not _todos:
-            return json.dumps({"message": "待办列表为空", "todos": []}, ensure_ascii=False)
-        return json.dumps(
-            {"message": f"共 {len(_todos)} 条待办", "todos": _todos},
-            ensure_ascii=False,
-        )
+        conn = _get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT id, content, done, created_at FROM todos WHERE session_id = ? ORDER BY id",
+                (session_id,),
+            ).fetchall()
+            todos = [{"id": r["id"], "content": r["content"], "done": bool(r["done"]), "created_at": r["created_at"]} for r in rows]
+            if not todos:
+                return json.dumps({"message": "待办列表为空", "todos": []}, ensure_ascii=False)
+            return json.dumps(
+                {"message": f"共 {len(todos)} 条待办", "todos": todos},
+                ensure_ascii=False,
+            )
+        finally:
+            conn.close()
 
     if action == "complete":
         if todo_id is None:
             return json.dumps({"error": "完成待办需要 todo_id 参数"}, ensure_ascii=False)
-        for item in _todos:
-            if item["id"] == todo_id:
-                item["done"] = True
-                return json.dumps(
-                    {"message": f"待办 #{todo_id} 已完成", "todo": item},
-                    ensure_ascii=False,
-                )
-        return json.dumps({"error": f"未找到待办 #{todo_id}"}, ensure_ascii=False)
+        conn = _get_conn()
+        try:
+            row = conn.execute(
+                "SELECT id, content, done FROM todos WHERE id = ? AND session_id = ?",
+                (todo_id, session_id),
+            ).fetchone()
+            if row is None:
+                return json.dumps({"error": f"未找到待办 #{todo_id}"}, ensure_ascii=False)
+            conn.execute("UPDATE todos SET done = 1 WHERE id = ?", (todo_id,))
+            conn.commit()
+            return json.dumps(
+                {"message": f"待办 #{todo_id} 已完成", "todo": {"id": row["id"], "content": row["content"], "done": True}},
+                ensure_ascii=False,
+            )
+        finally:
+            conn.close()
 
     return json.dumps({"error": f"未知操作: {action}"}, ensure_ascii=False)
-
-
-@register_tool(
-    name="get_weather",
-    description="查询指定城市的天气信息（mock 实现）",
-    parameters={
-        "type": "object",
-        "properties": {
-            "city": {
-                "type": "string",
-                "description": "城市名称，如 北京、上海、深圳",
-            }
-        },
-        "required": ["city"],
-    },
-)
-def get_weather(city: str) -> str:
-    """返回 mock 天气信息，支持模糊匹配（如"北京市"匹配"北京"）"""
-    # 先精确匹配，再模糊匹配
-    weather = _MOCK_WEATHER.get(city)
-    if weather is None:
-        for key, value in _MOCK_WEATHER.items():
-            if key != "default" and (key in city or city in key):
-                weather = value
-                break
-    if weather is None:
-        weather = _MOCK_WEATHER["default"]
-    return json.dumps(
-        {"city": city, "weather": weather, "source": "mock"},
-        ensure_ascii=False,
-    )

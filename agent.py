@@ -87,7 +87,7 @@ def run_agent(user_input: str, session_id: str) -> AgentResult:
 
         # 记录 assistant 消息，把 tool_calls 信息序列化到 content 中
         tool_calls_info = [
-            {"name": tc.name, "arguments": tc.arguments}
+            {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
             for tc in response.tool_calls
         ]
         assistant_content = json.dumps({
@@ -101,7 +101,7 @@ def run_agent(user_input: str, session_id: str) -> AgentResult:
             logger.info("[session:%s] [turn:%d] 执行工具: %s(%s)",
                         session_id, turns, tc.name, json.dumps(tc.arguments, ensure_ascii=False))
 
-            result = registry.execute(tc.name, tc.arguments)
+            result = registry.execute(tc.name, tc.arguments, context={"session_id": session_id})
 
             logger.info("[session:%s] [turn:%d] 工具结果: %s",
                         session_id, turns, result[:200])
