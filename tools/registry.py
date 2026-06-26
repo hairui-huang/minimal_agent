@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 from dataclasses import dataclass, field
@@ -78,6 +79,14 @@ class ToolRegistry:
             kwargs = {**arguments}
             if context:
                 kwargs.update(context)
+            # 过滤掉函数不接受的参数（LLM 可能多传无关参数）
+            sig = inspect.signature(info.func)
+            valid_params = set(sig.parameters.keys())
+            if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                # 函数接受 **kwargs，不过滤
+                pass
+            else:
+                kwargs = {k: v for k, v in kwargs.items() if k in valid_params}
             result = info.func(**kwargs)
             return str(result)
         except Exception as e:

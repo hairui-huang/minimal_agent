@@ -93,7 +93,11 @@ async def serve_frontend():
     html_path = os.path.join(os.path.dirname(__file__), "index.html")
     if not os.path.exists(html_path):
         raise HTTPException(status_code=404, detail="index.html not found")
-    return FileResponse(html_path, media_type="text/html")
+    return FileResponse(
+        html_path,
+        media_type="text/html",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 @app.get("/api/health")

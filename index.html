@@ -279,6 +279,36 @@ body::before {
   white-space: pre-wrap;
   word-break: break-word;
 }
+.message .msg-body strong { color: var(--accent); font-weight: 600; }
+.message .msg-body em { color: var(--text-secondary); font-style: italic; }
+.message .msg-body code {
+  background: rgba(45, 212, 191, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: var(--font-code);
+  font-size: 13px;
+  color: var(--accent);
+}
+.message .msg-body pre {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+  margin: 8px 0;
+  overflow-x: auto;
+}
+.message .msg-body pre code {
+  background: none;
+  padding: 0;
+  color: var(--text-primary);
+}
+.message .msg-body ul {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+.message .msg-body li {
+  margin: 4px 0;
+}
 
 .message.user .msg-body {
   background: var(--user-bg);
@@ -774,7 +804,7 @@ function appendMessage(role, content, time, stats) {
       <span class="msg-role">${role === 'user' ? '你' : 'Agent'}</span>
       <span class="msg-time">${time ? formatTime(time) : ''}</span>
     </div>
-    <div class="msg-body">${escapeHtml(content)}</div>
+    <div class="msg-body">${renderMarkdown(content)}</div>
     ${statsHtml}
   `;
   container.insertBefore(div, typing);
@@ -885,6 +915,27 @@ function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
+}
+
+function renderMarkdown(text) {
+  // 先转义 HTML
+  let html = escapeHtml(text);
+  // 代码块 ```
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
+  // 行内代码 `
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // 粗体 **text**
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  // 斜体 *text*
+  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  // 无序列表 - item
+  html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+  html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+  // 有序列表 1. item
+  html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+  // 换行
+  html = html.replace(/\n/g, '<br>');
+  return html;
 }
 
 function formatTime(ts) {

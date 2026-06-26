@@ -370,19 +370,22 @@ minimal-agent-runtime/
 | LLM 调用 | 每次全量 prompt | prompt cache（DeepSeek 支持） |
 | 工具结果 | 每次重新计算 | 缓存（如天气 5 分钟内复用） |
 
-### 五、状态机的优缺点
+### 五、循环范式与工程治理
 
-**优点**：
-- 状态转换明确（plan → act → observe → reflect），可测试、可恢复
-- 每个状态有明确的输入输出，便于 debug
-- 支持复杂任务的分支和回退
+当前项目是一个 **Simple Loop + 基础治理**（轮次限制、异常捕获、日志）的 Agent。
 
-**缺点**：
-- 简单场景过度设计（用户问"1+1"也要走 plan → act 流程）
-- 状态爆炸：任务复杂时状态数指数增长
-- 灵活性差：LLM 擅长自由推理，状态机限制了它的能力
+| 层级 | 模式 | 当前状态 | 说明 |
+|------|------|---------|------|
+| 循环内核 | Simple Loop | ✅ 已实现 | LLM 直接输出下一步，系统执行 |
+| 循环内核 | ReAct | ❌ 未实现 | 每轮强制 Thought → Action → Observation 结构 |
+| 工程治理 | Loop Engineering | 🟡 部分实现 | 有轮次限制和日志，缺预算控制、重复检测、终止校验 |
 
-**建议**：简单 Agent 用纯 loop（当前方案），复杂 Agent（如 Devin）用状态机 + LLM 混合决策。
+**演进方向**：
+
+1. **引入 ReAct 格式**：让 LLM 每轮输出结构化的 Thought/Action/Observation，提升可追踪性
+2. **加强 Loop Engineering**：重复动作检测、工具执行超时、终止条件外部校验、token/步数预算控制
+
+完整排序：`Simple Loop < 裸 ReAct < 工程化 ReAct（Loop Engineering）`
 
 ---
 

@@ -114,6 +114,16 @@ def _format_history(history: list[Message]) -> list[dict]:
 
                 entry: dict = {"role": "assistant", "content": content, "tool_calls": tool_calls}
                 formatted.append(entry)
+
+                # 把关联的 tool 消息也加入 formatted，并跳过已消费的索引
+                for k in range(i + 1, j):
+                    formatted.append({
+                        "role": "tool",
+                        "tool_call_id": history[k].tool_call_id or "",
+                        "content": history[k].content or "",
+                    })
+                i = j  # 跳到 tool 消息之后
+                continue  # 跳过末尾的 i += 1
             else:
                 entry: dict = {"role": "assistant", "content": content}
                 formatted.append(entry)
